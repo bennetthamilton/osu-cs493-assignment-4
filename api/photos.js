@@ -1,51 +1,63 @@
-/*
- * API sub-router for businesses collection endpoints.
- */
-
 const { Router } = require('express')
+const multer = require('multer')
 
-const { validateAgainstSchema } = require('../lib/validation')
 const {
-  PhotoSchema,
   insertNewPhoto,
   getPhotoById
 } = require('../models/photo')
 
+const { sendPhotoProcessingTask } = require('../lib/rabbitmq')
+
 const router = Router()
 
-/*
- * POST /photos - Route to create a new photo.
- */
-router.post('/', async (req, res) => {
-  if (validateAgainstSchema(req.body, PhotoSchema)) {
-    try {
-      const id = await insertNewPhoto(req.body)
-      res.status(201).send({
-        id: id,
-        links: {
-          photo: `/photos/${id}`,
-          business: `/businesses/${req.body.businessId}`
-        }
-      })
-    } catch (err) {
-      console.error(err)
-      res.status(500).send({
-        error: "Error inserting photo into DB.  Please try again later."
-      })
+const upload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: function (req, file, cb) {
+    if (file.mimetype === 'image/jpeg' || file.mimetype === 'image/png') {
+      cb(null, true)
+    } else {
+      cb(new Error('Only JPEG and PNG files are allowed'))
     }
-  } else {
-    res.status(400).send({
-      error: "Request body is not a valid photo object"
+  }
+})
+
+router.post('/', upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).send({
+      error: 'Request must include an image file in the file field'
+    })
+  }
+
+  if (!req.body.businessId) {
+    return res.status(400).send({
+      error: 'Request must include businessId'
+    })
+  }
+
+  try {
+    const id = await insertNewPhoto(req.body, req.file)
+
+    await sendPhotoProcessingTask(id)
+
+    res.status(201).send({
+      id,
+      links: {
+        photo: `/photos/${id}`,
+        business: `/businesses/${req.body.businessId}`
+      }
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).send({
+      error: 'Error inserting photo into DB. Please try again later.'
     })
   }
 })
 
-/*
- * GET /photos/{id} - Route to fetch info about a specific photo.
- */
 router.get('/:id', async (req, res, next) => {
   try {
     const photo = await getPhotoById(req.params.id)
+
     if (photo) {
       res.status(200).send(photo)
     } else {
@@ -54,7 +66,7 @@ router.get('/:id', async (req, res, next) => {
   } catch (err) {
     console.error(err)
     res.status(500).send({
-      error: "Unable to fetch photo.  Please try again later."
+      error: 'Unable to fetch photo. Please try again later.'
     })
   }
 })
