@@ -1,15 +1,9 @@
-/*
- * Business schema and data accessor methods
- */
-
 const { ObjectId } = require('mongodb')
 
 const { getDbReference } = require('../lib/mongo')
 const { extractValidFields } = require('../lib/validation')
+const { getPhotosByBusinessId } = require('./photo')
 
-/*
- * Schema describing required/optional fields of a business object.
- */
 const BusinessSchema = {
   name: { required: true },
   address: { required: true },
@@ -23,19 +17,11 @@ const BusinessSchema = {
 }
 exports.BusinessSchema = BusinessSchema
 
-/*
- * Executes a DB query to return a single page of businesses.  Returns a
- * Promise that resolves to an array containing the fetched page of businesses.
- */
 async function getBusinessesPage(page) {
   const db = getDbReference()
   const collection = db.collection('businesses')
   const count = await collection.countDocuments()
 
-  /*
-   * Compute last page number and make sure page is within allowed bounds.
-   * Compute offset into collection.
-   */
   const pageSize = 10
   const lastPage = Math.ceil(count / pageSize)
   page = page > lastPage ? lastPage : page
@@ -58,10 +44,6 @@ async function getBusinessesPage(page) {
 }
 exports.getBusinessesPage = getBusinessesPage
 
-/*
- * Executes a DB query to insert a new business into the database.  Returns
- * a Promise that resolves to the ID of the newly-created business entry.
- */
 async function insertNewBusiness(business) {
   business = extractValidFields(business, BusinessSchema)
   const db = getDbReference()
@@ -71,38 +53,29 @@ async function insertNewBusiness(business) {
 }
 exports.insertNewBusiness = insertNewBusiness
 
-/*
- * Executes a DB query to fetch detailed information about a single
- * specified business based on its ID, including photo data for
- * the business.  Returns a Promise that resolves to an object containing
- * information about the requested business.  If no business with the
- * specified ID exists, the returned Promise will resolve to null.
- */
 async function getBusinessById(id) {
   const db = getDbReference()
   const collection = db.collection('businesses')
+
   if (!ObjectId.isValid(id)) {
     return null
-  } else {
-    const results = await collection.aggregate([
-      { $match: { _id: new ObjectId(id) } },
-      { $lookup: {
-          from: "photos",
-          localField: "_id",
-          foreignField: "businessId",
-          as: "photos"
-      }}
-    ]).toArray()
-    return results[0]
   }
+
+  const business = await collection.findOne({
+    _id: new ObjectId(id)
+  })
+
+  if (!business) {
+    return null
+  }
+
+  business.photos = await getPhotosByBusinessId(id)
+
+  return business
 }
+
 exports.getBusinessById = getBusinessById
 
-/*
- * Executes a DB query to bulk insert an array new business into the database.
- * Returns a Promise that resolves to a map of the IDs of the newly-created
- * business entries.
- */
 async function bulkInsertNewBusinesses(businesses) {
   const businessesToInsert = businesses.map(function (business) {
     return extractValidFields(business, BusinessSchema)
